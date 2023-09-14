@@ -1,0 +1,414 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+import sklearn
+from imblearn.over_sampling import RandomOverSampler
+from nltk.corpus import wordnet
+import nltk
+from nltk.tag.perceptron import PerceptronTagger
+from nltk.stem import WordNetLemmatizer
+from tqdm import tqdm
+import re
+import string
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from nltk.corpus import stopwords
+from sklearn.model_selection import GridSearchCV
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier,ExtraTreesClassifier,AdaBoostClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import cross_val_score,KFold
+import xgboost as xgb
+from sklearn.decomposition import TruncatedSVD
+from sklearn.naive_bayes import GaussianNB
+from sklearn.metrics import classification_report,ConfusionMatrixDisplay, confusion_matrix
+from sklearn.cluster import KMeans
+from sklearn.decomposition import NMF, LatentDirichletAllocation
+import seaborn as sns
+import matplotlib.pyplot as plt
+from tensorflow import keras
+from tensorflow.keras import regularizers
+from tensorflow import keras
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout,Softmax,Activation, Dense, Embedding, GlobalAveragePooling1D,Bidirectional,LSTM
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.metrics import CategoricalAccuracy
+from tensorflow.keras.callbacks import EarlyStopping
+!pip install keras-tuner --upgrade
+import keras_tuner as kt
+from keras.src.layers.serialization import activation
+from tensorflow.keras.layers import Activation, Dense, Embedding, GlobalAveragePooling1D
+from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
+!pip install keras_self_attention
+from keras_self_attention import SeqSelfAttention
+!pip install -U fasttext
+import fasttext.util
+
+text_message=pd.read_csv('spam_text_message.csv')
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('stopwords')
+target=text_message.pop('Category')
+
+mapping={'ham':0,'spam':1}
+target=target.map(lambda x: mapping.get(x,x))
+
+X_train,X_test,y_train,y_test=train_test_split(text_message,target,test_size=0.25,random_state=42)    
+ros = RandomOverSampler(random_state=42,sampling_strategy=1)
+#X_res, y_res = ros.fit_resample(text_message, target)
+
+text_train=[]
+for x in X_train['Message']:
+    text_train.append(x)
+    
+text_test=[]
+for x in X_test['Message']:
+    text_test.append(x)
+
+#clean text
+def pos_tag(x):
+    if x.startswith('J'):
+        return wordnet.ADJ
+    elif x.startswith('V'):
+        return wordnet.VERB
+    elif x.startswith('N'):
+        return wordnet.NOUN
+    elif x.startswith('R'):
+        return wordnet.ADV
+    else: 
+        return None
+
+
+def clean_body(input):
+    lemmatizer=WordNetLemmatizer()
+    tagger=PerceptronTagger()
+    docs=[]
+
+
+    for idx in tqdm(range(len(input))):
+        review=re.sub(r'\W',' ',str(input[idx]))
+        review=re.sub(r'\s+[a-zA-Z]\s+',' ',review)
+        review=re.sub(r'\s+',' ',review,flags=re.I)
+        review=re.sub(r'\d',' ',review)
+        review=re.sub(r'\b\d+\d',' ',review)
+        review=review.lower()
+        review=review.split()
+
+        pos=[x[1] for x in tagger.tag(review)]
+
+        review=\
+        [lemmatizer.lemmatize(token,pos=pos_tag(tag))\
+        if pos_tag(tag)!=None else lemmatizer.lemmatize(token)\
+        for token,tag in zip(review,pos)]
+        review=' '.join(review)
+        docs.append(review)
+        
+    return docs
+ 
+docs_train=clean_body(text_train)
+docs_test=clean_body(text_test)
+
+
+def clean_body(input):
+    lemmatizer=WordNetLemmatizer()
+    tagger=PerceptronTagger()
+    docs=[]
+
+
+    for idx in tqdm(range(len(input))):
+        review=re.sub(r'\W',' ',str(input[idx]))
+        review=re.sub(r'\s+[a-zA-Z]\s+',' ',review)
+        review=re.sub(r'\s+',' ',review,flags=re.I)
+        review=re.sub(r'\d',' ',review)
+        review=re.sub(r'\b\d+\d',' ',review)
+        review=review.lower()
+        review=review.split()
+
+        pos=[x[1] for x in tagger.tag(review)]
+
+        review=\
+        [lemmatizer.lemmatize(token,pos=pos_tag(tag))\
+        if pos_tag(tag)!=None else lemmatizer.lemmatize(token)\
+        for token,tag in zip(review,pos)]
+        review=' '.join(review)
+        docs.append(review)
+        
+    return docs
+ 
+docs_train=clean_body(text_train)
+docs_test=clean_body(text_test)
+
+vectorizer = TfidfVectorizer(
+    ngram_range=(1, 2), 
+    max_features=5000,
+    sublinear_tf=True,
+    stop_words = stopwords.words('english'))
+    
+
+# Fit Vectorizer on train data
+# Transform on all data (train - test)
+x_train_tfidf = vectorizer.fit_transform(docs_train)
+vectorizer.get_feature_names_out()[-100:]
+
+#decision tree
+pipeline=Pipeline([('tfidf_vectorizer',TfidfVectorizer()),
+                  ('svd',TruncatedSVD()), 
+                  ('clf_tree',DecisionTreeClassifier(random_state=42))])
+
+param_grid={
+    'tfidf_vectorizer__min_df':[10],
+    'tfidf_vectorizer__ngram_range':[(1,2),(1,3)],
+    'tfidf_vectorizer__max_features':[1000,2000,4000],
+    'tfidf_vectorizer__sublinear_tf':[True,False],
+    'tfidf_vectorizer__stop_words':[stopwords.words('english')],
+    'svd__n_components':[300,400],
+    'clf_tree__max_depth':np.arange(2,11).tolist(),
+    'clf_tree__min_samples_split':[round(len(docs_train)*0.2)],
+    'clf_tree__min_samples_leaf':[round(len(docs_train)*0.1)],
+    
+}
+
+grid_search=GridSearchCV(pipeline,param_grid=param_grid,cv=KFold(n_splits=5,shuffle=True,random_state=42),
+                        scoring='accuracy',error_score='raise',n_jobs=-1)
+
+clf_search=grid_search.fit(docs_train,y_train)
+
+cv_results=pd.DataFrame(clf_search.cv_results_)
+cv_results.sort_values(by=['rank_test_score','mean_test_score','std_test_score'],
+       ascending=[True,False,False])
+
+clf=clf_search.best_estimator_
+pred=clf.predict(docs_train)
+print(classification_report(y_train, pred, target_names=['ham','spam']))
+
+pred=clf.predict(docs_test)
+print(classification_report(y_test, pred, target_names=['ham','spam']))
+
+def confusion_matrix_plot(y_test,pred):
+    cm=confusion_matrix(y_test,pred)
+    cmn=cm.astype('float')/cm.sum(axis=1)[:,np.newaxis]
+    fig, ax = plt.subplots(figsize=(5,4))
+    sns.heatmap(cmn,annot=True,fmt='.2f',xticklabels=['ham','spam'], yticklabels=['ham','spam'],cbar=False)
+    plt.title('Confusion Matrix')
+    plt.yticks(rotation=0)
+    
+confusion_matrix_plot(y_test,pred)
+
+def roc_precison_recall_plot(clf,x_train,x_test,y_train,y_test):
+    fig, [ax1,ax2]=plt.subplots(1,2,figsize=(10,5))
+    RocCurveDisplay.from_estimator(clf,x_train,y_train,ax=ax1,name='Train')
+    RocCurveDisplay.from_estimator(clf,x_test,y_test,ax=ax1,name='Test')
+
+    PrecisionRecallDisplay.from_estimator(clf,docs_train,y_train,ax=ax2,name='Train')
+    PrecisionRecallDisplay.from_estimator(clf,docs_test,y_test,ax=ax2,name='Test')
+
+    ax1.set_title('ROC curve')
+    ax2.set_title('Precision-Recall curve')
+
+    ax1.grid(linestyle='--')
+    ax2.grid(linestyle='--')
+
+roc_precison_recall_plot(clf,docs_train,docs_test,y_train,y_test)
+
+#random forest
+
+pipeline=Pipeline([('tfidf_vectorizer',TfidfVectorizer()),
+                   ('svd',TruncatedSVD()),      
+                    ('clf_rf',RandomForestClassifier(random_state=42))])
+
+param_grid={
+    'tfidf_vectorizer__min_df':[10],
+    'tfidf_vectorizer__ngram_range':[(1,2),(1,3)],
+    'tfidf_vectorizer__max_features':[1000,2000,4000],
+    'tfidf_vectorizer__sublinear_tf':[True,False],
+    'tfidf_vectorizer__stop_words':[stopwords.words('english')],
+    'svd__n_components':[300,400],
+    'clf_rf__max_depth':np.arange(2,11).tolist(),
+    'clf_rf__min_samples_split':[round(len(docs_train)*0.2)],
+    'clf_rf__min_samples_leaf':[round(len(docs_train)*0.1)],
+}
+
+grid_search=GridSearchCV(pipeline,param_grid=param_grid,cv=KFold(n_splits=5,shuffle=True,random_state=42),
+                        scoring='accuracy',error_score='raise',n_jobs=-1)
+
+clf_search=grid_search.fit(docs_train,y_train)
+
+cv_results=pd.DataFrame(clf_search.cv_results_)
+cv_results.sort_values(by=['rank_test_score','mean_test_score','std_test_score'],
+       ascending=[True,False,False])
+
+clf=clf_search.best_estimator_
+pred=clf.predict(docs_train)
+print(classification_report(y_train, pred, target_names=['ham','spam']))
+
+pred=clf.predict(docs_test)
+print(classification_report(y_test, pred, target_names=['ham','spam']))
+
+confusion_matrix_plot(y_test,pred)
+
+roc_precison_recall_plot(clf,docs_train,docs_test,y_train,y_test)
+
+cm=confusion_matrix(y_test,pred)
+cm=cm.astype('float')/cm.sum(axis=1)[:,np.newaxis]
+fig, ax = plt.subplots(figsize=(5,4))
+sns.heatmap(cm, annot=True, fmt='.2f', xticklabels=['ham','spam'], yticklabels=['ham','spam'],cbar=False)
+plt.title('Confusion Matrix')
+plt.yticks(rotation=0)
+
+#naive bayes
+from scipy.sparse import issparse
+class SparseToDenseConverter:
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        if issparse(X):  # Check if input is sparse
+            return X.toarray()  # Convert sparse matrix to dense array
+        else:
+            return X  # Return unchanged if not sparse
+        
+pipeline=Pipeline([('tfidf_vectorizer',TfidfVectorizer()),
+                   ('transform',SparseToDenseConverter()),
+                    ('svd',TruncatedSVD()),      
+                    ('clf_nb',GaussianNB())])
+param_grid={
+    'tfidf_vectorizer__min_df':[10],
+    'tfidf_vectorizer__ngram_range':[(1,2),(1,3),(1,4)],
+    'tfidf_vectorizer__max_features':[1000,2000,4000],
+    'tfidf_vectorizer__sublinear_tf':[True,False],
+    'tfidf_vectorizer__stop_words':[stopwords.words('english')],
+    'svd__n_components':[300,400],
+    
+}
+
+grid_search=GridSearchCV(pipeline,param_grid=param_grid,cv=KFold(n_splits=5,shuffle=True,random_state=42),
+                        scoring='accuracy',n_jobs=-1)
+
+clf_search=grid_search.fit(docs_train,y_train)
+
+cv_results=pd.DataFrame(clf_search.cv_results_)
+cv_results.sort_values(by=['rank_test_score','mean_test_score','std_test_score'],
+       ascending=[True,False,False]).head(10)
+
+clf=clf_search.best_estimator_
+pred=clf.predict(docs_train)
+print(classification_report(y_train, pred, target_names=['ham','spam']))
+
+pred=clf.predict(docs_test)
+print(classification_report(y_test, pred, target_names=['ham','spam']))
+
+confusion_matrix_plot(y_test,pred)
+
+roc_precison_recall_plot(clf,docs_train,docs_test,y_train,y_test)
+
+pipeline=Pipeline([('tfidf_vectorizer',TfidfVectorizer()),
+                  ('svd',TruncatedSVD()),
+                  ('adaboost',AdaBoostClassifier(random_state=42))])
+
+param_grid={
+    'tfidf_vectorizer__min_df':[10],
+    'tfidf_vectorizer__ngram_range':[(1,2),(1,3),(1,4)],
+    'tfidf_vectorizer__max_features':[1000,2000,4000],
+    'tfidf_vectorizer__sublinear_tf':[True,False],
+    'tfidf_vectorizer__stop_words':[stopwords.words('english')],
+    'svd__n_components':[300,400],
+    'adaboost__estimator':[DecisionTreeClassifier(max_depth=2),DecisionTreeClassifier(max_depth=3)],
+}
+
+grid_search=GridSearchCV(pipeline,param_grid=param_grid,cv=KFold(n_splits=5,shuffle=True,random_state=42),
+                        scoring='accuracy',n_jobs=-1)
+
+clf_search=grid_search.fit(docs_train,y_train)
+
+cv_results=pd.DataFrame(clf_search.cv_results_)
+cv_results.sort_values(by=['rank_test_score','mean_test_score','std_test_score'],
+       ascending=[True,False,False]).head(10)
+
+clf=clf_search.best_estimator_
+pred=clf.predict(docs_train)
+print(classification_report(y_train, pred, target_names=['ham','spam']))
+
+pred=clf.predict(docs_test)
+print(classification_report(y_test, pred, target_names=['ham','spam']))
+
+confusion_matrix_plot(y_test,pred)
+
+roc_precison_recall_plot(clf,docs_train,docs_test,y_train,y_test)
+
+pipeline=Pipeline([('tfidf_vectorizer',TfidfVectorizer()),
+                  ('svd',TruncatedSVD()),
+                  ('xgb',xgb.XGBRegressor(random_state=42,n_jpbs=-1))])
+
+param_grid={
+    'tfidf_vectorizer__min_df':[10],
+    'tfidf_vectorizer__ngram_range':[(1,2),(1,3),(1,4)],
+    'tfidf_vectorizer__max_features':[1000,2000,4000],
+    'tfidf_vectorizer__sublinear_tf':[True,False],
+    'tfidf_vectorizer__stop_words':[stopwords.words('english')],
+    'svd__n_components':[300,400],
+    'xgb__max_depth': np.arange(2,11,1).tolist(),
+    'xgb__alpha': np.arange(0,2.5,0.5).tolist(),
+    'xgb__lambda': np.arange(0,2,0.5).tolist(),
+}
+
+grid_search=GridSearchCV(pipeline,param_grid=param_grid,cv=KFold(n_splits=5,shuffle=True,random_state=42),
+                        scoring='accuracy',n_jobs=-1)
+
+clf_search=grid_search.fit(docs_train,y_train)
+
+all_text=[]
+for x in text_message['Message']:
+    all_text.append(x)
+    
+all_text=clean_body(all_text)
+
+tfidf_vectorizer=TfidfVectorizer(ngram_range=(1,3),stop_words='english',min_df=20)
+all_text_tfidf=tfidf_vectorizer.fit_transform(all_text)
+
+
+n_clusters=2
+kmeans=KMeans(n_clusters=2,random_state=42,n_init=20,max_iter=1000)
+model=kmeans.fit(all_text_tfidf)
+
+topk=50
+features=tfidf_vectorizer.get_feature_names_out()
+centroids=model.cluster_centers_.argsort()[:,::-1]
+
+for cluster in range(n_clusters):
+    print(f'Cluster {cluster}:',end='')
+    for ind in centroids[cluster,:topk]:
+        print(' {}'.format(features[ind]),end='')
+    print('\n')
+
+remap_labels={0:1,1:0}
+remmaped_labels=[remap_labels[x] for x in model.labels_]
+
+print(classification_report(target,remmaped_labels,target_names=['ham','spam']))
+
+tf_vectorizer=CountVectorizer(strip_accents='unicode',
+                                lowercase=True,
+                                max_df=0.95, 
+                                min_df=20,
+                                token_pattern = r'\b[a-zA-Z]{3,}\b',
+                                stop_words='english')
+n_topics=2
+tf = tf_vectorizer.fit_transform(all_text)
+
+lda=LatentDirichletAllocation(n_components=n_topics,learning_method='online',random_state=42)
+lda.fit(tf)
+
+n_top_words=30
+print('Topics in LDA model:')
+tf_feature_names=tf_vectorizer.get_feature_names_out()
+for topic_idx, topic in enumerate(lda.components_):
+    print(f'Topic {topic_idx+1}')
+    sorted_topics_indcs=(-topic).argsort()[:n_top_words]
+    feature_names=[tf_feature_names[i] for i in sorted_topics_indcs]
+    feature_counts = topic[sorted_topics_indcs]
+    print(' '.join([f'{fn} {fc:.2f}' for fn,fc in zip(feature_names,feature_counts)]))
+    print('\n')
+
